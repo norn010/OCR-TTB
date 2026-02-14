@@ -158,18 +158,14 @@
         </div>
         <div class="mt-3 flex flex-wrap gap-2">
           <form id="download-word-form" method="post" action="/download/word">
-            <input id="word_html_b64" type="hidden" name="extracted_html_b64" value="{{ extracted_html_b64 }}">
-            <input id="word_text_b64" type="hidden" name="extracted_text_b64" value="{{ extracted_text_b64 }}">
-            <input id="word_page_htmls_b64" type="hidden" name="page_htmls_b64" value="{{ page_htmls_b64 }}">
+            <input id="word_result_id" type="hidden" name="result_id" value="{{ result_id }}">
             <button type="submit"
                     class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700">
               ดาวน์โหลด Word
             </button>
           </form>
           <form id="download-excel-form" method="post" action="/download/excel">
-            <input id="excel_html_b64" type="hidden" name="extracted_html_b64" value="{{ extracted_html_b64 }}">
-            <input id="excel_text_b64" type="hidden" name="extracted_text_b64" value="{{ extracted_text_b64 }}">
-            <input id="excel_page_htmls_b64" type="hidden" name="page_htmls_b64" value="{{ page_htmls_b64 }}">
+            <input id="excel_result_id" type="hidden" name="result_id" value="{{ result_id }}">
             <button type="submit"
                     class="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700">
               ดาวน์โหลด Excel
@@ -199,6 +195,13 @@
         </div>
       </section>
   </div>
+
+  <div id="initial-json"
+       data-page-htmls='{{ (page_htmls or [])|tojson }}'
+       data-page-texts='{{ (page_texts or [])|tojson }}'
+       data-page-timings='{{ (page_timings or [])|tojson }}'
+       data-result-id='{{ result_id or "" }}'
+       class="hidden"></div>
 
   <script type="module">
     import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
@@ -236,16 +239,24 @@
     const ocrElapsedChip = document.getElementById("ocr-elapsed-chip");
     const resultPageTimings = document.getElementById("result-page-timings");
 
-    const wordHtmlB64 = document.getElementById("word_html_b64");
-    const wordTextB64 = document.getElementById("word_text_b64");
-    const wordPageHtmlsB64 = document.getElementById("word_page_htmls_b64");
-    const excelHtmlB64 = document.getElementById("excel_html_b64");
-    const excelTextB64 = document.getElementById("excel_text_b64");
-    const excelPageHtmlsB64 = document.getElementById("excel_page_htmls_b64");
+    const wordResultId = document.getElementById("word_result_id");
+    const excelResultId = document.getElementById("excel_result_id");
 
-    let ocrPageHtmls = {{ (page_htmls or [])|tojson }};
-    let ocrPageTexts = {{ (page_texts or [])|tojson }};
-    let pageTimings = {{ (page_timings or [])|tojson }};
+    const initialJsonElement = document.getElementById("initial-json");
+    let ocrPageHtmls = [];
+    let ocrPageTexts = [];
+    let pageTimings = [];
+    let currentResultId = "";
+    if (initialJsonElement) {
+      try {
+        ocrPageHtmls = JSON.parse(initialJsonElement.dataset.pageHtmls || "[]");
+        ocrPageTexts = JSON.parse(initialJsonElement.dataset.pageTexts || "[]");
+        pageTimings = JSON.parse(initialJsonElement.dataset.pageTimings || "[]");
+        currentResultId = initialJsonElement.dataset.resultId || "";
+      } catch (error) {
+        console.error("Failed to parse initial data:", error);
+      }
+    }
 
     let currentOcrPage = 1;
     let previewPdf = null;
@@ -399,21 +410,17 @@
       }
     }
 
-    function setDownloadPayloads(result) {
-      if (!result) return;
-      if (wordHtmlB64) wordHtmlB64.value = result.extracted_html_b64 || "";
-      if (wordTextB64) wordTextB64.value = result.extracted_text_b64 || "";
-      if (wordPageHtmlsB64) wordPageHtmlsB64.value = result.page_htmls_b64 || "";
-      if (excelHtmlB64) excelHtmlB64.value = result.extracted_html_b64 || "";
-      if (excelTextB64) excelTextB64.value = result.extracted_text_b64 || "";
-      if (excelPageHtmlsB64) excelPageHtmlsB64.value = result.page_htmls_b64 || "";
+    function setDownloadResultId(resultId) {
+      if (wordResultId) wordResultId.value = resultId || "";
+      if (excelResultId) excelResultId.value = resultId || "";
     }
 
-    function renderResult(result) {
+    function renderResult(result, resultId) {
       if (!result) return;
       ocrPageHtmls = result.page_htmls || [];
       ocrPageTexts = result.page_texts || [];
       pageTimings = result.page_timings || [];
+      currentResultId = resultId || currentResultId;
       currentOcrPage = 1;
 
       if (ocrResultSection) ocrResultSection.classList.remove("hidden");
@@ -422,7 +429,7 @@
         ocrElapsedChip.textContent = `ใช้เวลา ${result.elapsed_seconds} วินาที`;
       }
       updateOcrPageView();
-      setDownloadPayloads(result);
+      setDownloadResultId(currentResultId);
       renderPageTimingList(resultPageTimings, pageTimings);
 
       if (ocrResultSection) {
@@ -558,7 +565,7 @@
             );
             pageTimings = statusData.page_timings || [];
             renderPageTimingList(ocrProgressPageTimings, pageTimings);
-            renderResult(statusData.result);
+            renderResult(statusData.result, statusData.result_id);
             completed = true;
           }
         }
@@ -574,6 +581,7 @@
     });
 
     renderPageTimingList(resultPageTimings, pageTimings);
+    setDownloadResultId(currentResultId);
   </script>
 </body>
 </html>

@@ -27,6 +27,8 @@ app.config["MAX_CONTENT_LENGTH"] = 30 * 1024 * 1024  # 30 MB
 TYPHOON_OCR_URL = "https://api.opentyphoon.ai/v1/ocr"
 OCR_JOBS: dict[str, dict[str, Any]] = {}
 OCR_JOBS_LOCK = threading.Lock()
+OCR_RESULTS: dict[str, dict[str, Any]] = {}
+OCR_RESULTS_LOCK = threading.Lock()
 ALLOWED_HTML_TAGS = set(bleach.sanitizer.ALLOWED_TAGS).union(
     {
         "p",
@@ -502,6 +504,7 @@ def update_ocr_job(
     current_page_number: Optional[int] = None,
     error: Optional[str] = None,
     result: Optional[dict] = None,
+    result_id: Optional[str] = None,
 ) -> None:
     with OCR_JOBS_LOCK:
         job = OCR_JOBS.get(job_id)
@@ -521,6 +524,8 @@ def update_ocr_job(
             job["error"] = error
         if result is not None:
             job["result"] = result
+        if result_id is not None:
+            job["result_id"] = result_id
 
 
 def append_ocr_job_page_timing(job_id: str, page_number: int, elapsed_seconds: float) -> None:
@@ -535,6 +540,20 @@ def append_ocr_job_page_timing(job_id: str, page_number: int, elapsed_seconds: f
                 "elapsed_seconds": round(float(elapsed_seconds), 2),
             }
         )
+
+
+def store_ocr_result(result: dict[str, Any]) -> str:
+    result_id = uuid.uuid4().hex
+    with OCR_RESULTS_LOCK:
+        OCR_RESULTS[result_id] = result
+    return result_id
+
+
+def get_ocr_result(result_id: str) -> Optional[dict[str, Any]]:
+    if not result_id:
+        return None
+    with OCR_RESULTS_LOCK:
+        return OCR_RESULTS.get(result_id)
 
 
 def export_tables_to_docx(
@@ -899,11 +918,13 @@ def run_ocr_job(job_id: str, params: dict[str, Any]) -> None:
             progress_callback=on_progress,
             page_done_callback=on_page_done,
         )
+        result_id = store_ocr_result(result)
         update_ocr_job(
             job_id,
             status="completed",
             message="OCR เสร็จแล้ว",
             result=result,
+            result_id=result_id,
         )
     except Exception as exc:
         update_ocr_job(
@@ -958,6 +979,7 @@ def ocr_status(job_id: str):
             "total_steps": job.get("total_steps", 0),
             "current_page_number": job.get("current_page_number", 0),
             "page_timings": job.get("page_timings", []),
+            "result_id": job.get("result_id", ""),
             "error": job.get("error", ""),
         }
         if job["status"] == "completed" and job.get("result") is not None:
@@ -975,6 +997,7 @@ def index():
     page_texts = []
     page_htmls = []
     page_timings = []
+    result_id = ""
     elapsed_seconds = None
     error = ""
 
@@ -1029,6 +1052,7 @@ def index():
                 page_htmls = result["page_htmls"]
                 page_timings = result["page_timings"]
                 elapsed_seconds = result["elapsed_seconds"]
+                result_id = store_ocr_result(result)
             except Exception as exc:  # keep UI simple
                 error = str(exc)
 
@@ -1042,6 +1066,7 @@ def index():
         page_texts=page_texts,
         page_htmls=page_htmls,
         page_timings=page_timings,
+        result_id=result_id,
         elapsed_seconds=elapsed_seconds,
         error=error,
         defaults=defaults,
@@ -1050,9 +1075,16 @@ def index():
 
 @app.route("/download/word", methods=["POST"])
 def download_word():
-    extracted_html = decode_base64_payload(request.form.get("extracted_html_b64", ""))
-    extracted_text = decode_base64_payload(request.form.get("extracted_text_b64", ""))
-    page_htmls = decode_base64_json_list(request.form.get("page_htmls_b64", ""))
+    result_id = request.form.get("result_id", "").strip()
+    cached_result = get_ocr_result(result_id)
+    if cached_result:
+        extracted_html = cached_result.get("extracted_html", "")
+        extracted_text = cached_result.get("extracted_text", "")
+        page_htmls = cached_result.get("page_htmls", [])
+    else:
+        extracted_html = decode_base64_payload(request.form.get("extracted_html_b64", ""))
+        extracted_text = decode_base64_payload(request.form.get("extracted_text_b64", ""))
+        page_htmls = decode_base64_json_list(request.form.get("page_htmls_b64", ""))
     file_data = export_tables_to_docx(extracted_html, extracted_text, page_htmls=page_htmls)
     return send_file(
         file_data,
@@ -1064,9 +1096,16 @@ def download_word():
 
 @app.route("/download/excel", methods=["POST"])
 def download_excel():
-    extracted_html = decode_base64_payload(request.form.get("extracted_html_b64", ""))
-    extracted_text = decode_base64_payload(request.form.get("extracted_text_b64", ""))
-    page_htmls = decode_base64_json_list(request.form.get("page_htmls_b64", ""))
+    result_id = request.form.get("result_id", "").strip()
+    cached_result = get_ocr_result(result_id)
+    if cached_result:
+        extracted_html = cached_result.get("extracted_html", "")
+        extracted_text = cached_result.get("extracted_text", "")
+        page_htmls = cached_result.get("page_htmls", [])
+    else:
+        extracted_html = decode_base64_payload(request.form.get("extracted_html_b64", ""))
+        extracted_text = decode_base64_payload(request.form.get("extracted_text_b64", ""))
+        page_htmls = decode_base64_json_list(request.form.get("page_htmls_b64", ""))
     file_data = export_tables_to_excel(extracted_html, extracted_text, page_htmls=page_htmls)
     return send_file(
         file_data,
