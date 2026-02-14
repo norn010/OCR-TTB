@@ -1,0 +1,9 @@
+Flask
+requests
+pypdf
+cryptography>=3.1
+markdown
+bleach
+python-docx
+openpyxl
+beautifulsoup4

@@ -1,0 +1,579 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PDF OCR ด้วย Typhoon</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs" type="module"></script>
+  <style>
+    .markdown-result table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      margin-bottom: 12px;
+    }
+    .markdown-result th,
+    .markdown-result td {
+      border: 1px solid #cbd5e1;
+      padding: 8px 10px;
+      vertical-align: top;
+    }
+    .markdown-result pre {
+      background: #0f172a;
+      color: #e2e8f0;
+      border-radius: 10px;
+      padding: 12px;
+      overflow-x: auto;
+    }
+    .markdown-result p { margin: 8px 0; }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-800">
+  <div class="mx-auto max-w-6xl p-4 md:p-8">
+    <div class="mb-6 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 p-6 text-white shadow-lg">
+      <h1 class="text-2xl font-bold md:text-3xl">PDF OCR ด้วย Typhoon</h1>
+      <p class="mt-2 text-sm text-blue-100 md:text-base">
+        ลากไฟล์ PDF มาวางได้เลย, รองรับไฟล์ที่มีรหัสผ่าน และแสดงผลแบบตาราง/ตัวหนาตามต้นฉบับ
+      </p>
+    </div>
+
+    <form method="post" enctype="multipart/form-data" class="grid gap-6 lg:grid-cols-2">
+      <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 class="mb-4 text-lg font-semibold text-slate-900">อัปโหลดไฟล์</h2>
+
+        <label
+          id="dropzone"
+          for="pdf_file"
+          class="flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-5 text-center transition hover:border-blue-400 hover:bg-blue-50"
+        >
+          <div class="text-sm font-medium text-slate-700">ลากไฟล์ PDF มาวางที่นี่</div>
+          <div class="mt-1 text-xs text-slate-500">หรือคลิกเพื่อเลือกไฟล์</div>
+          <div id="selected-file" class="mt-3 rounded-full bg-slate-200 px-3 py-1 text-xs text-slate-700">
+            ยังไม่ได้เลือกไฟล์
+          </div>
+        </label>
+        <input id="pdf_file" name="pdf_file" type="file" accept=".pdf" required class="hidden">
+        <div id="pdf-preview-wrapper" class="mt-3 hidden rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <div class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">PDF Preview (หน้าแรก)</div>
+          <div id="pdf-preview-status" class="mb-2 hidden rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700"></div>
+          <canvas id="pdf-preview-canvas" class="mx-auto w-full max-w-md rounded border border-slate-300 bg-white"></canvas>
+          <div id="pdf-preview-controls" class="mt-3 hidden items-center justify-center gap-2">
+            <button id="preview-prev-btn" type="button" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100">ก่อนหน้า</button>
+            <span id="preview-page-info" class="text-xs font-semibold text-slate-600">หน้า 1 / 1</span>
+            <button id="preview-next-btn" type="button" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100">ถัดไป</button>
+          </div>
+        </div>
+
+        <div class="mt-4">
+          <label for="pdf_password" class="mb-1 block text-sm font-medium text-slate-700">รหัสผ่าน PDF (ถ้ามี)</label>
+          <input id="pdf_password" name="pdf_password" type="password" placeholder="เช่น 002034"
+                 class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100">
+        </div>
+
+        <div class="mt-4">
+          <label for="pages" class="mb-1 block text-sm font-medium text-slate-700">Pages (optional)</label>
+          <input id="pages" name="pages" placeholder="เว้นว่าง=ทุกหน้า, เช่น 1-39 หรือ 1,2,3"
+                 class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100">
+          <p class="mt-1 text-xs text-slate-500">โหมดปัจจุบันจะอ่านทีละหน้าเพื่อให้ข้อมูลครบมากขึ้น (อาจใช้เวลานานขึ้น)</p>
+        </div>
+      </section>
+
+      <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 class="mb-4 text-lg font-semibold text-slate-900">ตั้งค่า OCR</h2>
+
+        <div class="space-y-4">
+          <div>
+            <label for="api_key" class="mb-1 block text-sm font-medium text-slate-700">Typhoon API Key</label>
+            <input id="api_key" name="api_key" type="password" placeholder="sk-..."
+                   class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100">
+          </div>
+
+          <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+            <input id="remember_api_key" type="checkbox" checked class="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500">
+            จดจำ API Key
+          </label>
+
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <label for="model" class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Model</label>
+              <input id="model" name="model" value="{{ defaults.model }}"
+                     class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100">
+            </div>
+            <div>
+              <label for="task_type" class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Task Type</label>
+              <input id="task_type" name="task_type" value="{{ defaults.task_type }}"
+                     class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100">
+            </div>
+            <div>
+              <label for="max_tokens" class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Max Tokens</label>
+              <input id="max_tokens" name="max_tokens" value="{{ defaults.max_tokens }}"
+                     class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100">
+            </div>
+            <div>
+              <label for="temperature" class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Temperature</label>
+              <input id="temperature" name="temperature" value="{{ defaults.temperature }}"
+                     class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100">
+            </div>
+            <div>
+              <label for="top_p" class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Top P</label>
+              <input id="top_p" name="top_p" value="{{ defaults.top_p }}"
+                     class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100">
+            </div>
+            <div>
+              <label for="repetition_penalty" class="mb-1 block text-xs font-medium uppercase tracking-wide text-slate-500">Repetition Penalty</label>
+              <input id="repetition_penalty" name="repetition_penalty" value="{{ defaults.repetition_penalty }}"
+                     class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100">
+            </div>
+          </div>
+
+          <button id="submit-btn" type="submit"
+                  class="w-full rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-200">
+            เริ่ม OCR
+          </button>
+          <div id="ocr-progress-box" class="hidden rounded-xl border border-blue-200 bg-blue-50 p-3">
+            <div id="ocr-progress-text" class="text-sm font-semibold text-blue-700">กำลังเริ่ม OCR...</div>
+            <div class="mt-2 h-2 w-full rounded-full bg-blue-100">
+              <div id="ocr-progress-bar" class="h-2 rounded-full bg-blue-600 transition-all" style="width: 0%"></div>
+            </div>
+            <div class="mt-3">
+              <div class="text-xs font-semibold text-blue-700">เวลาแต่ละหน้า</div>
+              <ul id="ocr-progress-page-timings" class="mt-1 max-h-28 overflow-y-auto text-xs text-blue-800"></ul>
+            </div>
+          </div>
+        </div>
+      </section>
+    </form>
+
+    {% if error %}
+      <div class="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{{ error }}</div>
+    {% endif %}
+
+      <section id="ocr-result-section" class="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm {% if not extracted_text %}hidden{% endif %}">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-xl font-semibold text-slate-900">ผลลัพธ์ OCR</h2>
+            <span id="ocr-elapsed-chip" class="rounded-full bg-emerald-100 px-3 py-1 text-sm font-semibold text-emerald-700 {% if elapsed_seconds is none %}hidden{% endif %}">
+              ใช้เวลา {{ elapsed_seconds }} วินาที
+            </span>
+        </div>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <form id="download-word-form" method="post" action="/download/word">
+            <input id="word_html_b64" type="hidden" name="extracted_html_b64" value="{{ extracted_html_b64 }}">
+            <input id="word_text_b64" type="hidden" name="extracted_text_b64" value="{{ extracted_text_b64 }}">
+            <input id="word_page_htmls_b64" type="hidden" name="page_htmls_b64" value="{{ page_htmls_b64 }}">
+            <button type="submit"
+                    class="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700">
+              ดาวน์โหลด Word
+            </button>
+          </form>
+          <form id="download-excel-form" method="post" action="/download/excel">
+            <input id="excel_html_b64" type="hidden" name="extracted_html_b64" value="{{ extracted_html_b64 }}">
+            <input id="excel_text_b64" type="hidden" name="extracted_text_b64" value="{{ extracted_text_b64 }}">
+            <input id="excel_page_htmls_b64" type="hidden" name="page_htmls_b64" value="{{ page_htmls_b64 }}">
+            <button type="submit"
+                    class="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700">
+              ดาวน์โหลด Excel
+            </button>
+          </form>
+        </div>
+        <div class="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <div class="text-sm font-semibold text-slate-700">เวลาแต่ละหน้า</div>
+          <ul id="result-page-timings" class="mt-2 max-h-40 overflow-y-auto text-xs text-slate-700">
+            {% for timing in (page_timings or []) %}
+              <li>หน้า {{ timing.page_number }}: {{ timing.elapsed_seconds }} วินาที</li>
+            {% endfor %}
+          </ul>
+        </div>
+        <div class="mt-4 flex items-center gap-2">
+          <button id="ocr-prev-btn" type="button" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100">ก่อนหน้า</button>
+          <span id="ocr-page-info" class="text-xs font-semibold text-slate-600">หน้า 1 / {{ page_htmls|length if page_htmls else 1 }}</span>
+          <button id="ocr-next-btn" type="button" class="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100">ถัดไป</button>
+        </div>
+        <div id="ocr-page-view" class="markdown-result mt-3 overflow-x-auto rounded-xl border border-slate-200 bg-white p-4 leading-relaxed">
+          {{ extracted_html | safe }}
+        </div>
+        <div class="mt-4">
+          <label for="raw-text" class="mb-2 block text-sm font-medium text-slate-700">Raw Text (หน้าปัจจุบัน)</label>
+          <textarea id="raw-text" readonly
+                    class="h-52 w-full rounded-xl border border-slate-300 bg-slate-50 p-3 font-mono text-xs text-slate-700 focus:outline-none">{{ extracted_text }}</textarea>
+        </div>
+      </section>
+  </div>
+
+  <script type="module">
+    import * as pdfjsLib from "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.min.mjs";
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.10.38/pdf.worker.min.mjs";
+
+    const storageKey = "typhoon_api_key";
+    const apiKeyInput = document.getElementById("api_key");
+    const rememberApiKeyInput = document.getElementById("remember_api_key");
+    const form = document.querySelector("form");
+
+    const fileInput = document.getElementById("pdf_file");
+    const dropzone = document.getElementById("dropzone");
+    const selectedFile = document.getElementById("selected-file");
+    const submitBtn = document.getElementById("submit-btn");
+    const previewWrapper = document.getElementById("pdf-preview-wrapper");
+    const previewCanvas = document.getElementById("pdf-preview-canvas");
+    const previewStatus = document.getElementById("pdf-preview-status");
+    const pdfPasswordInput = document.getElementById("pdf_password");
+    const previewControls = document.getElementById("pdf-preview-controls");
+    const previewPrevBtn = document.getElementById("preview-prev-btn");
+    const previewNextBtn = document.getElementById("preview-next-btn");
+    const previewPageInfo = document.getElementById("preview-page-info");
+
+    const ocrPrevBtn = document.getElementById("ocr-prev-btn");
+    const ocrNextBtn = document.getElementById("ocr-next-btn");
+    const ocrPageInfo = document.getElementById("ocr-page-info");
+    const ocrPageView = document.getElementById("ocr-page-view");
+    const rawTextArea = document.getElementById("raw-text");
+    const ocrProgressBox = document.getElementById("ocr-progress-box");
+    const ocrProgressText = document.getElementById("ocr-progress-text");
+    const ocrProgressBar = document.getElementById("ocr-progress-bar");
+    const ocrProgressPageTimings = document.getElementById("ocr-progress-page-timings");
+    const ocrResultSection = document.getElementById("ocr-result-section");
+    const ocrElapsedChip = document.getElementById("ocr-elapsed-chip");
+    const resultPageTimings = document.getElementById("result-page-timings");
+
+    const wordHtmlB64 = document.getElementById("word_html_b64");
+    const wordTextB64 = document.getElementById("word_text_b64");
+    const wordPageHtmlsB64 = document.getElementById("word_page_htmls_b64");
+    const excelHtmlB64 = document.getElementById("excel_html_b64");
+    const excelTextB64 = document.getElementById("excel_text_b64");
+    const excelPageHtmlsB64 = document.getElementById("excel_page_htmls_b64");
+
+    let ocrPageHtmls = {{ (page_htmls or [])|tojson }};
+    let ocrPageTexts = {{ (page_texts or [])|tojson }};
+    let pageTimings = {{ (page_timings or [])|tojson }};
+
+    let currentOcrPage = 1;
+    let previewPdf = null;
+    let currentPreviewPage = 1;
+    let totalPreviewPages = 1;
+    let previewTimer = null;
+
+    function updateSelectedFileName(file) {
+      if (!selectedFile) return;
+      if (!file) {
+        selectedFile.textContent = "ยังไม่ได้เลือกไฟล์";
+        return;
+      }
+      selectedFile.textContent = file.name;
+    }
+
+    function setPreviewStatus(message = "", isVisible = false) {
+      if (!previewStatus) return;
+      previewStatus.textContent = message;
+      if (isVisible) {
+        previewStatus.classList.remove("hidden");
+      } else {
+        previewStatus.classList.add("hidden");
+      }
+    }
+
+    function clearCanvas() {
+      const context = previewCanvas.getContext("2d");
+      context.clearRect(0, 0, previewCanvas.width || 1, previewCanvas.height || 1);
+    }
+
+    function updatePreviewControls() {
+      if (!previewControls || !previewPrevBtn || !previewNextBtn || !previewPageInfo) return;
+      const hasManyPages = totalPreviewPages > 1;
+      previewControls.classList.toggle("hidden", !previewPdf || !hasManyPages);
+      previewControls.classList.toggle("flex", !!previewPdf && hasManyPages);
+      previewPageInfo.textContent = `หน้า ${currentPreviewPage} / ${totalPreviewPages}`;
+      previewPrevBtn.disabled = currentPreviewPage <= 1;
+      previewNextBtn.disabled = currentPreviewPage >= totalPreviewPages;
+      previewPrevBtn.classList.toggle("opacity-50", previewPrevBtn.disabled);
+      previewNextBtn.classList.toggle("opacity-50", previewNextBtn.disabled);
+      previewPrevBtn.classList.toggle("cursor-not-allowed", previewPrevBtn.disabled);
+      previewNextBtn.classList.toggle("cursor-not-allowed", previewNextBtn.disabled);
+    }
+
+    async function renderPdfPage(pageNumber) {
+      if (!previewPdf || !previewCanvas) return;
+      const page = await previewPdf.getPage(pageNumber);
+      const viewport = page.getViewport({ scale: 1.2 });
+      const maxWidth = 520;
+      const scale = viewport.width > maxWidth ? maxWidth / viewport.width : 1;
+      const finalViewport = page.getViewport({ scale: 1.2 * scale });
+
+      const context = previewCanvas.getContext("2d");
+      previewCanvas.width = Math.ceil(finalViewport.width);
+      previewCanvas.height = Math.ceil(finalViewport.height);
+      await page.render({ canvasContext: context, viewport: finalViewport }).promise;
+      currentPreviewPage = pageNumber;
+      updatePreviewControls();
+    }
+
+    async function renderPdfPreview(file) {
+      if (!file || !previewWrapper || !previewCanvas) return;
+      const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+      if (!isPdf) {
+        previewWrapper.classList.add("hidden");
+        setPreviewStatus();
+        previewPdf = null;
+        updatePreviewControls();
+        return;
+      }
+
+      try {
+        setPreviewStatus("กำลังสร้างตัวอย่างหน้าแรก...", true);
+        const fileData = await file.arrayBuffer();
+        const password = pdfPasswordInput && pdfPasswordInput.value ? pdfPasswordInput.value : undefined;
+        previewPdf = await pdfjsLib.getDocument({ data: fileData, password }).promise;
+        totalPreviewPages = previewPdf.numPages || 1;
+        currentPreviewPage = 1;
+        await renderPdfPage(currentPreviewPage);
+        previewWrapper.classList.remove("hidden");
+        setPreviewStatus();
+      } catch (error) {
+        previewWrapper.classList.remove("hidden");
+        clearCanvas();
+        previewPdf = null;
+        totalPreviewPages = 1;
+        currentPreviewPage = 1;
+        updatePreviewControls();
+        const isPasswordIssue =
+          error && (error.name === "PasswordException" || String(error.message || "").toLowerCase().includes("password"));
+        if (isPasswordIssue) {
+          const hasPassword = pdfPasswordInput && pdfPasswordInput.value;
+          setPreviewStatus(
+            hasPassword
+              ? "รหัสผ่านไม่ถูกต้อง ยังไม่สามารถแสดงตัวอย่างได้"
+              : "ไฟล์นี้มีรหัสผ่าน กรุณาใส่รหัสผ่านเพื่อแสดงตัวอย่าง",
+            true
+          );
+        } else {
+          setPreviewStatus("ไม่สามารถแสดงตัวอย่าง PDF ได้", true);
+          console.error("Preview error:", error);
+        }
+      }
+    }
+
+    function updateOcrPageView() {
+      if (!ocrPageView || !ocrPageInfo) return;
+      const total = ocrPageHtmls.length > 0 ? ocrPageHtmls.length : 1;
+      if (currentOcrPage < 1) currentOcrPage = 1;
+      if (currentOcrPage > total) currentOcrPage = total;
+
+      if (ocrPageHtmls.length > 0) {
+        ocrPageView.innerHTML = ocrPageHtmls[currentOcrPage - 1] || "";
+        if (rawTextArea) rawTextArea.value = ocrPageTexts[currentOcrPage - 1] || "";
+      }
+      ocrPageInfo.textContent = `หน้า ${currentOcrPage} / ${total}`;
+
+      if (ocrPrevBtn && ocrNextBtn) {
+        const disablePrev = currentOcrPage <= 1;
+        const disableNext = currentOcrPage >= total;
+        ocrPrevBtn.disabled = disablePrev;
+        ocrNextBtn.disabled = disableNext;
+        ocrPrevBtn.classList.toggle("opacity-50", disablePrev);
+        ocrNextBtn.classList.toggle("opacity-50", disableNext);
+        ocrPrevBtn.classList.toggle("cursor-not-allowed", disablePrev);
+        ocrNextBtn.classList.toggle("cursor-not-allowed", disableNext);
+      }
+    }
+
+    function updateProgress(step, total, pageNumber) {
+      if (!ocrProgressBox || !ocrProgressText || !ocrProgressBar) return;
+      ocrProgressBox.classList.remove("hidden");
+      const safeTotal = total > 0 ? total : 1;
+      const percent = Math.max(1, Math.min(100, Math.round((step / safeTotal) * 100)));
+      ocrProgressText.textContent = `กำลัง OCR หน้า ${step}/${safeTotal} (หน้าเอกสาร ${pageNumber})`;
+      ocrProgressBar.style.width = `${percent}%`;
+    }
+
+    function renderPageTimingList(targetElement, timings) {
+      if (!targetElement) return;
+      targetElement.innerHTML = "";
+      if (!timings || timings.length === 0) {
+        targetElement.innerHTML = "<li class=\"text-slate-500\">ยังไม่มีข้อมูลเวลา</li>";
+        return;
+      }
+      for (const item of timings) {
+        const li = document.createElement("li");
+        li.textContent = `หน้า ${item.page_number}: ${item.elapsed_seconds} วินาที`;
+        targetElement.appendChild(li);
+      }
+    }
+
+    function setDownloadPayloads(result) {
+      if (!result) return;
+      if (wordHtmlB64) wordHtmlB64.value = result.extracted_html_b64 || "";
+      if (wordTextB64) wordTextB64.value = result.extracted_text_b64 || "";
+      if (wordPageHtmlsB64) wordPageHtmlsB64.value = result.page_htmls_b64 || "";
+      if (excelHtmlB64) excelHtmlB64.value = result.extracted_html_b64 || "";
+      if (excelTextB64) excelTextB64.value = result.extracted_text_b64 || "";
+      if (excelPageHtmlsB64) excelPageHtmlsB64.value = result.page_htmls_b64 || "";
+    }
+
+    function renderResult(result) {
+      if (!result) return;
+      ocrPageHtmls = result.page_htmls || [];
+      ocrPageTexts = result.page_texts || [];
+      pageTimings = result.page_timings || [];
+      currentOcrPage = 1;
+
+      if (ocrResultSection) ocrResultSection.classList.remove("hidden");
+      if (ocrElapsedChip) {
+        ocrElapsedChip.classList.remove("hidden");
+        ocrElapsedChip.textContent = `ใช้เวลา ${result.elapsed_seconds} วินาที`;
+      }
+      updateOcrPageView();
+      setDownloadPayloads(result);
+      renderPageTimingList(resultPageTimings, pageTimings);
+
+      if (ocrResultSection) {
+        ocrResultSection.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    }
+
+    const cachedApiKey = localStorage.getItem(storageKey);
+    if (cachedApiKey && apiKeyInput && !apiKeyInput.value) {
+      apiKeyInput.value = cachedApiKey;
+    }
+
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files && fileInput.files.length > 0 ? fileInput.files[0] : null;
+      updateSelectedFileName(file);
+      renderPdfPreview(file);
+    });
+
+    pdfPasswordInput.addEventListener("input", () => {
+      const file = fileInput.files && fileInput.files.length > 0 ? fileInput.files[0] : null;
+      if (!file) return;
+      if (previewTimer) clearTimeout(previewTimer);
+      previewTimer = setTimeout(() => renderPdfPreview(file), 300);
+    });
+
+    ["dragenter", "dragover"].forEach((eventName) => {
+      dropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        dropzone.classList.add("border-blue-500", "bg-blue-50");
+      });
+    });
+
+    ["dragleave", "drop"].forEach((eventName) => {
+      dropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        dropzone.classList.remove("border-blue-500", "bg-blue-50");
+      });
+    });
+
+    dropzone.addEventListener("drop", (event) => {
+      const files = event.dataTransfer.files;
+      if (!files || files.length === 0) return;
+      fileInput.files = files;
+      updateSelectedFileName(files[0]);
+      renderPdfPreview(files[0]);
+    });
+
+    if (previewPrevBtn) {
+      previewPrevBtn.addEventListener("click", async () => {
+        if (!previewPdf || currentPreviewPage <= 1) return;
+        await renderPdfPage(currentPreviewPage - 1);
+      });
+    }
+
+    if (previewNextBtn) {
+      previewNextBtn.addEventListener("click", async () => {
+        if (!previewPdf || currentPreviewPage >= totalPreviewPages) return;
+        await renderPdfPage(currentPreviewPage + 1);
+      });
+    }
+
+    if (ocrPrevBtn) {
+      ocrPrevBtn.addEventListener("click", () => {
+        currentOcrPage -= 1;
+        updateOcrPageView();
+      });
+    }
+
+    if (ocrNextBtn) {
+      ocrNextBtn.addEventListener("click", () => {
+        currentOcrPage += 1;
+        updateOcrPageView();
+      });
+    }
+
+    updatePreviewControls();
+    updateOcrPageView();
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (apiKeyInput) {
+        if (rememberApiKeyInput && rememberApiKeyInput.checked) {
+          localStorage.setItem(storageKey, apiKeyInput.value || "");
+        } else {
+          localStorage.removeItem(storageKey);
+        }
+      }
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = "กำลัง OCR...";
+        submitBtn.classList.add("cursor-not-allowed", "opacity-70");
+      }
+
+      if (ocrProgressBox) ocrProgressBox.classList.remove("hidden");
+      if (ocrProgressText) ocrProgressText.textContent = "กำลังเริ่มงาน OCR...";
+      if (ocrProgressBar) ocrProgressBar.style.width = "5%";
+
+      try {
+        const formData = new FormData(form);
+        const startResp = await fetch("/ocr/start", { method: "POST", body: formData });
+        const startData = await startResp.json();
+        if (!startResp.ok || !startData.ok) {
+          throw new Error(startData.error || "ไม่สามารถเริ่ม OCR ได้");
+        }
+
+        const jobId = startData.job_id;
+        let completed = false;
+        while (!completed) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          const statusResp = await fetch(`/ocr/status/${jobId}`);
+          const statusData = await statusResp.json();
+          if (!statusResp.ok || !statusData.ok) {
+            throw new Error(statusData.error || "ไม่สามารถอ่านสถานะ OCR ได้");
+          }
+
+          if (statusData.status === "running") {
+            updateProgress(
+              statusData.current_step || 0,
+              statusData.total_steps || 0,
+              statusData.current_page_number || 0
+            );
+            pageTimings = statusData.page_timings || [];
+            renderPageTimingList(ocrProgressPageTimings, pageTimings);
+          } else if (statusData.status === "failed") {
+            throw new Error(statusData.error || "OCR ล้มเหลว");
+          } else if (statusData.status === "completed") {
+            updateProgress(
+              statusData.total_steps || 1,
+              statusData.total_steps || 1,
+              statusData.current_page_number || statusData.total_steps || 1
+            );
+            pageTimings = statusData.page_timings || [];
+            renderPageTimingList(ocrProgressPageTimings, pageTimings);
+            renderResult(statusData.result);
+            completed = true;
+          }
+        }
+      } catch (error) {
+        alert(error.message || "เกิดข้อผิดพลาดระหว่าง OCR");
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = "เริ่ม OCR";
+          submitBtn.classList.remove("cursor-not-allowed", "opacity-70");
+        }
+      }
+    });
+
+    renderPageTimingList(resultPageTimings, pageTimings);
+  </script>
+</body>
+</html>
