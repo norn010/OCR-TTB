@@ -7,3 +7,5 @@ bleach
 python-docx
 openpyxl
 beautifulsoup4
+pyodbc
+python-dotenv

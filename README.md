@@ -16,7 +16,18 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-## 2) ตั้งค่า API Key (เลือกแบบใดแบบหนึ่ง)
+## 2) ตั้งค่า `.env` (แนะนำ)
+
+สร้างไฟล์ `.env` ที่โฟลเดอร์โปรเจกต์ แล้วใส่ค่าเช่น:
+
+```env
+TYPHOON_API_KEY=YOUR_KEY
+SQLSERVER_CONNECTION_STRING=mssql+pyodbc://@LAPTOP-V2TJ4I1J\SQLEXPRESS/ExcelTtbDB?driver=ODBC+Driver+17+for+SQL+Server&trusted_connection=yes&TrustServerCertificate=yes
+```
+
+แอปจะโหลด `.env` อัตโนมัติเมื่อรัน `python app.py`
+
+## 3) ตั้งค่า API Key แบบชั่วคราว (ทางเลือก)
 
 - ใส่ในหน้าเว็บตอนรัน
 - หรือ set env ก่อนรัน
@@ -25,7 +36,7 @@ pip install -r requirements.txt
 $env:TYPHOON_API_KEY="YOUR_KEY"
 ```
 
-## 3) รันเว็บ
+## 4) รันเว็บ
 
 ```powershell
 python app.py

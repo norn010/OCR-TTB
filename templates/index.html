@@ -171,7 +171,17 @@
               ดาวน์โหลด Excel
             </button>
           </form>
+          <div class="flex flex-wrap items-center gap-2">
+            <input id="db-table-name" type="text" value="OCR_TTB_WEB"
+                   class="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                   placeholder="ชื่อตาราง SQL">
+            <button id="upload-db-btn" type="button"
+                    class="rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-900">
+              อัพลงฐานข้อมูล
+            </button>
+          </div>
         </div>
+        <div id="db-upload-message" class="mt-2 text-sm"></div>
         <div class="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
           <div class="text-sm font-semibold text-slate-700">เวลาแต่ละหน้า</div>
           <ul id="result-page-timings" class="mt-2 max-h-40 overflow-y-auto text-xs text-slate-700">
@@ -238,6 +248,9 @@
     const ocrResultSection = document.getElementById("ocr-result-section");
     const ocrElapsedChip = document.getElementById("ocr-elapsed-chip");
     const resultPageTimings = document.getElementById("result-page-timings");
+    const uploadDbBtn = document.getElementById("upload-db-btn");
+    const dbTableNameInput = document.getElementById("db-table-name");
+    const dbUploadMessage = document.getElementById("db-upload-message");
 
     const wordResultId = document.getElementById("word_result_id");
     const excelResultId = document.getElementById("excel_result_id");
@@ -415,6 +428,12 @@
       if (excelResultId) excelResultId.value = resultId || "";
     }
 
+    function setDbUploadMessage(message, isError = false) {
+      if (!dbUploadMessage) return;
+      dbUploadMessage.textContent = message || "";
+      dbUploadMessage.className = isError ? "mt-2 text-sm text-red-600" : "mt-2 text-sm text-emerald-700";
+    }
+
     function renderResult(result, resultId) {
       if (!result) return;
       ocrPageHtmls = result.page_htmls || [];
@@ -582,6 +601,44 @@
 
     renderPageTimingList(resultPageTimings, pageTimings);
     setDownloadResultId(currentResultId);
+
+    if (uploadDbBtn) {
+      uploadDbBtn.addEventListener("click", async () => {
+        if (!currentResultId) {
+          setDbUploadMessage("ยังไม่มีผลลัพธ์ OCR สำหรับอัพโหลด", true);
+          return;
+        }
+
+        uploadDbBtn.disabled = true;
+        uploadDbBtn.classList.add("opacity-70", "cursor-not-allowed");
+        uploadDbBtn.textContent = "กำลังอัพโหลด...";
+        setDbUploadMessage("กำลังอัพโหลดข้อมูลลงฐานข้อมูล...");
+
+        try {
+          const body = new URLSearchParams();
+          body.append("result_id", currentResultId);
+          body.append("table_name", dbTableNameInput ? dbTableNameInput.value : "OCR_TTB_WEB");
+
+          const resp = await fetch("/upload/db", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: body.toString()
+          });
+          const data = await resp.json();
+          if (!resp.ok || !data.ok) {
+            throw new Error(data.error || "อัพโหลดฐานข้อมูลไม่สำเร็จ");
+          }
+          const info = data.upload_info || {};
+          setDbUploadMessage(`อัพโหลดสำเร็จ: ${info.db_name || "ExcelTtbDB"} / ${info.table_name || "-"} / ${info.rows || 0} แถว`);
+        } catch (error) {
+          setDbUploadMessage(error.message || "อัพโหลดฐานข้อมูลไม่สำเร็จ", true);
+        } finally {
+          uploadDbBtn.disabled = false;
+          uploadDbBtn.classList.remove("opacity-70", "cursor-not-allowed");
+          uploadDbBtn.textContent = "อัพลงฐานข้อมูล";
+        }
+      });
+    }
   </script>
 </body>
 </html>

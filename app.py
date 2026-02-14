@@ -8,17 +8,21 @@ import tempfile
 import threading
 import time
 import uuid
+from urllib.parse import parse_qs, unquote_plus, urlparse
 from typing import Any, Callable, Optional
 
 import bleach
 import markdown
 import requests
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 from docx import Document
 from flask import Flask, jsonify, render_template, request, send_file
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from pypdf import PdfReader, PdfWriter
+
+load_dotenv()
 
 
 app = Flask(__name__)
@@ -556,6 +560,109 @@ def get_ocr_result(result_id: str) -> Optional[dict[str, Any]]:
         return OCR_RESULTS.get(result_id)
 
 
+def sanitize_table_name(table_name: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_]", "_", (table_name or "").strip())
+    cleaned = cleaned.strip("_")
+    if not cleaned:
+        cleaned = "OCR_TTB_WEB"
+    return cleaned[:120]
+
+
+def get_sql_connection_strings(target_db: str) -> tuple[str, str]:
+    """
+    Return (master_conn_str, target_db_conn_str) for pyodbc.
+    Supports:
+    - SQLSERVER_CONNECTION_STRING in SQLAlchemy format:
+      mssql+pyodbc://@SERVER/DB?driver=ODBC+Driver+17+for+SQL+Server&trusted_connection=yes
+    - fallback to local default instance.
+    """
+    env_conn = (os.getenv("SQLSERVER_CONNECTION_STRING") or "").strip()
+    if env_conn.startswith("mssql+pyodbc://"):
+        parsed = urlparse(env_conn)
+        server = parsed.netloc.lstrip("@")
+        db_in_conn = parsed.path.lstrip("/") or target_db
+        query = parse_qs(parsed.query)
+        driver = unquote_plus(query.get("driver", ["ODBC Driver 18 for SQL Server"])[0])
+        trusted = query.get("trusted_connection", ["yes"])[0]
+        trust_cert = query.get("TrustServerCertificate", ["yes"])[0]
+        encrypt = query.get("Encrypt", ["no"])[0]
+
+        base = (
+            f"DRIVER={{{driver}}};SERVER={server};"
+            f"Trusted_Connection={trusted};TrustServerCertificate={trust_cert};Encrypt={encrypt};"
+        )
+        return base, base + f"DATABASE={db_in_conn};"
+
+    base = "DRIVER={ODBC Driver 18 for SQL Server};SERVER=.;Trusted_Connection=yes;Encrypt=no;"
+    return base, base + f"DATABASE={target_db};"
+
+
+def normalize_sql_headers(headers: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: dict[str, int] = {}
+    for index, header in enumerate(headers, start=1):
+        value = re.sub(r"\s+", " ", (header or "").strip())
+        if not value:
+            value = f"Column_{index}"
+        count = seen.get(value, 0) + 1
+        seen[value] = count
+        if count > 1:
+            value = f"{value}_{count}"
+        normalized.append(value)
+    return normalized
+
+
+def upload_result_to_sql_server(result: dict[str, Any], table_name: str) -> dict[str, Any]:
+    try:
+        import pyodbc  # Local import so app can run without DB dependency.
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "ยังไม่ได้ติดตั้ง pyodbc ใน virtualenv นี้ กรุณารัน: pip install pyodbc"
+        ) from exc
+
+    extracted_html = result.get("extracted_html", "")
+    page_htmls = result.get("page_htmls", []) or []
+    payloads = build_source_table_payloads(page_htmls, extracted_html)
+    merged_rows = merge_table_rows_with_source(payloads)
+    if not merged_rows:
+        raise ValueError("ไม่พบตารางสำหรับอัพโหลดฐานข้อมูล")
+
+    headers = normalize_sql_headers([str(h) for h in merged_rows[0]])
+    data_rows = merged_rows[1:]
+
+    safe_table = sanitize_table_name(table_name)
+    master_conn_str, target_conn_str = get_sql_connection_strings("ExcelTtbDB")
+
+    conn_master = pyodbc.connect(master_conn_str, autocommit=True)
+    cur_master = conn_master.cursor()
+    cur_master.execute("IF DB_ID('ExcelTtbDB') IS NULL CREATE DATABASE [ExcelTtbDB];")
+    conn_master.close()
+
+    conn = pyodbc.connect(target_conn_str)
+    cur = conn.cursor()
+    cur.execute(f"IF OBJECT_ID('dbo.{safe_table}', 'U') IS NOT NULL DROP TABLE dbo.{safe_table};")
+
+    col_defs = ", ".join([f"[{h.replace(']', ']]')}] NVARCHAR(MAX) NULL" for h in headers])
+    cur.execute(f"CREATE TABLE dbo.{safe_table} ({col_defs});")
+
+    if data_rows:
+        placeholders = ", ".join(["?"] * len(headers))
+        col_list = ", ".join([f"[{h.replace(']', ']]')}]" for h in headers])
+        insert_sql = f"INSERT INTO dbo.{safe_table} ({col_list}) VALUES ({placeholders})"
+        prepared_rows = []
+        for row in data_rows:
+            padded = list(row) + [""] * (len(headers) - len(row))
+            prepared_rows.append([None if v is None else str(v) for v in padded[: len(headers)]])
+        cur.fast_executemany = True
+        cur.executemany(insert_sql, prepared_rows)
+
+    conn.commit()
+    cur.execute(f"SELECT COUNT(*) FROM dbo.{safe_table};")
+    inserted_rows = cur.fetchone()[0]
+    conn.close()
+    return {"db_name": "ExcelTtbDB", "table_name": f"dbo.{safe_table}", "rows": int(inserted_rows)}
+
+
 def export_tables_to_docx(
     html: str,
     fallback_text: str,
@@ -985,6 +1092,24 @@ def ocr_status(job_id: str):
         if job["status"] == "completed" and job.get("result") is not None:
             response["result"] = job["result"]
     return jsonify(response)
+
+
+@app.route("/upload/db", methods=["POST"])
+def upload_db():
+    result_id = request.form.get("result_id", "").strip()
+    table_name = request.form.get("table_name", "").strip()
+    if not result_id:
+        return jsonify({"ok": False, "error": "ไม่พบผลลัพธ์ OCR สำหรับอัพโหลด"}), 400
+
+    result = get_ocr_result(result_id)
+    if not result:
+        return jsonify({"ok": False, "error": "ผลลัพธ์หมดอายุหรือไม่พบในหน่วยความจำ"}), 404
+
+    try:
+        upload_info = upload_result_to_sql_server(result, table_name)
+        return jsonify({"ok": True, "upload_info": upload_info})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 @app.route("/", methods=["GET", "POST"])
