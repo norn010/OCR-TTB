@@ -314,20 +314,88 @@ def get_pdf_page_count(file_path: str) -> int:
 
 def _parse_native_table_rows(lines: list[str]) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
+    seen_keys: set[tuple[str, str, str, str, str, str]] = set()
     current_vin = ""
+    current_vin_closed = False
     date_range_pattern = r"\d{1,2}/\d{1,2}/\d{4}-\d{1,2}/\d{1,2}/\d{4}"
     money_pattern = r"[0-9,]+\.[0-9]{2}"
     rate_pattern = r"[0-9]+\.[0-9]+"
+    combined_row_pattern = re.compile(
+        rf"^(?:([A-Z0-9]{{10,}})\s*(\(?Closed\)?)?\s+)?ดอกเบี้ย\s+({date_range_pattern})\s+(\d+)\s+({rate_pattern})\s+({money_pattern})\s+({money_pattern})$",
+        flags=re.IGNORECASE,
+    )
+
+    def add_row(
+        vin: str,
+        period: str,
+        days: str,
+        rate: str,
+        principal: str,
+        amount: str,
+        is_closed: bool,
+    ) -> None:
+        vin_clean = (vin or "").upper().strip()
+        period_clean = (period or "").strip()
+        days_clean = (days or "").strip()
+        rate_clean = (rate or "").strip()
+        principal_clean = (principal or "").strip()
+        amount_clean = (amount or "").strip()
+        if not vin_clean:
+            return
+        row_key = (vin_clean, period_clean, days_clean, rate_clean, principal_clean, amount_clean)
+        if row_key in seen_keys:
+            return
+        seen_keys.add(row_key)
+        vin_display = f"{vin_clean} (Closed)" if is_closed else vin_clean
+        rows.append(
+            {
+                "vin": vin_display,
+                "item": "ดอกเบี้ย",
+                "period": period_clean,
+                "days": days_clean,
+                "rate": rate_clean,
+                "principal": principal_clean,
+                "amount": amount_clean,
+            }
+        )
 
     for raw_line in lines:
         line = raw_line.strip()
         if not line:
             continue
 
-        vin_match = re.match(r"^([A-Z0-9]{10,})\s*\(Closed", line, flags=re.IGNORECASE)
-        if vin_match:
-            current_vin = vin_match.group(1)
+        # Handle rows where VIN and detail appear on the same line.
+        combined_match = combined_row_pattern.match(line)
+        if combined_match:
+            vin_inline = combined_match.group(1)
+            closed_inline = bool(combined_match.group(2))
+            vin_value = (vin_inline or current_vin or "").upper().strip()
+            if not vin_value:
+                continue
+            is_closed = closed_inline if vin_inline else current_vin_closed
+            add_row(
+                vin_value,
+                combined_match.group(3),
+                combined_match.group(4),
+                combined_match.group(5),
+                combined_match.group(6),
+                combined_match.group(7),
+                is_closed,
+            )
+            current_vin = vin_value
+            current_vin_closed = is_closed
             continue
+
+        # Some rows do not include "(Closed)" on the VIN line, so accept VIN-only lines too.
+        vin_match = re.match(r"^([A-Z0-9]{10,})(?:\s*(\(?Closed\)?))?", line, flags=re.IGNORECASE)
+        if vin_match:
+            vin_candidate = vin_match.group(1).upper()
+            closed_marker = vin_match.group(2) or ""
+            # Guard against accidental header capture: VIN should contain at least one digit.
+            if any(ch.isdigit() for ch in vin_candidate):
+                current_vin = vin_candidate
+                current_vin_closed = "closed" in closed_marker.lower()
+                continue
 
         if not line.startswith("ดอกเบี้ย"):
             continue
@@ -342,16 +410,31 @@ def _parse_native_table_rows(lines: list[str]) -> list[dict[str, str]]:
         if not current_vin:
             continue
 
-        rows.append(
-            {
-                "vin": current_vin,
-                "item": "ดอกเบี้ย",
-                "period": row_match.group(1),
-                "days": row_match.group(2),
-                "rate": row_match.group(3),
-                "principal": row_match.group(4),
-                "amount": row_match.group(5),
-            }
+        add_row(
+            current_vin,
+            row_match.group(1),
+            row_match.group(2),
+            row_match.group(3),
+            row_match.group(4),
+            row_match.group(5),
+            current_vin_closed,
+        )
+
+    # Fallback scan across full page text to catch rows that OCR/text layer split oddly.
+    blob = " ".join(lines)
+    blob_pattern = re.compile(
+        rf"([A-Z0-9]{{10,}})\s*(\(?Closed\)?)?\s*ดอกเบี้ย\s*({date_range_pattern})\s*(\d+)\s*({rate_pattern})\s*({money_pattern})\s*({money_pattern})",
+        flags=re.IGNORECASE,
+    )
+    for match in blob_pattern.finditer(blob):
+        add_row(
+            match.group(1),
+            match.group(3),
+            match.group(4),
+            match.group(5),
+            match.group(6),
+            match.group(7),
+            bool(match.group(2)),
         )
 
     return rows
@@ -389,7 +472,7 @@ def extract_native_page_content(file_path: str, page_number: int) -> tuple[str, 
     md_lines.append("|---|---|---|---:|---:|---:|---:|")
     for row in rows:
         md_lines.append(
-            f"| {row['vin']} (Closed) | {row['item']} | {row['period']} | {row['days']} | {row['rate']} | {row['principal']} | {row['amount']} |"
+            f"| {row['vin']} | {row['item']} | {row['period']} | {row['days']} | {row['rate']} | {row['principal']} | {row['amount']} |"
         )
 
     return "\n".join(md_lines), len(rows)
